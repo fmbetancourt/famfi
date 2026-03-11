@@ -44,6 +44,3 @@ next-env.d.ts
 
 # IDE
 /.idea/
-
-# Prisma
-/prisma/seed.ts
