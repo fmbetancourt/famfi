@@ -25,6 +25,7 @@ model FamilyMember {
   id           String        @id @default(cuid())
   email        String?       @unique
   name         String
+  passwordHash String?
   role         MemberRole
   family       Family        @relation(fields: [familyId], references: [id])
   familyId     String
