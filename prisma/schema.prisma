@@ -1,0 +1,237 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Family Structure ───────────────────────────────────────────
+
+model Family {
+  id        String         @id @default(cuid())
+  name      String
+  members   FamilyMember[]
+  budgets   Budget[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model FamilyMember {
+  id           String        @id @default(cuid())
+  email        String?       @unique
+  name         String
+  role         MemberRole
+  family       Family        @relation(fields: [familyId], references: [id])
+  familyId     String
+  creditCards  CreditCard[]
+  transactions Transaction[]
+  incomes      Income[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+enum MemberRole {
+  PROVIDER
+  DEPENDENT
+}
+
+// ─── Credit Cards ───────────────────────────────────────────────
+
+model CreditCard {
+  id               String            @id @default(cuid())
+  name             String
+  bank             String
+  cardType         String
+  lastFourDigits   String
+  owner            FamilyMember      @relation(fields: [ownerId], references: [id])
+  ownerId          String
+  creditLimit      Int // CLP integer, never float
+  currentBalance   Int               @default(0)
+  billingCycleDay  Int // day of month (e.g., 23)
+  paymentDueDay    Int // day of month (e.g., 10)
+  rateRevolving    Float // monthly % (e.g., 3.35)
+  rateInstallments Float // monthly % (e.g., 2.72)
+  rateCashAdvance  Float // monthly % (e.g., 3.35)
+  caeRevolving     Float // annual % (e.g., 51.10)
+  isActive         Boolean           @default(true)
+  isFrozen         Boolean           @default(false)
+  transactions     Transaction[]
+  balanceSnapshots BalanceSnapshot[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([ownerId])
+  @@index([bank])
+}
+
+model BalanceSnapshot {
+  id           String     @id @default(cuid())
+  creditCard   CreditCard @relation(fields: [creditCardId], references: [id])
+  creditCardId String
+  balance      Int
+  interestPaid Int        @default(0)
+  feesPaid     Int        @default(0)
+  snapshotDate DateTime
+
+  @@index([creditCardId, snapshotDate])
+}
+
+// ─── Transactions ───────────────────────────────────────────────
+
+model Transaction {
+  id           String            @id @default(cuid())
+  amount       Int // positive = expense, negative = income/refund
+  description  String
+  merchant     String? // e.g., "INFILTRADOS STEAK BAR"
+  category     Category          @relation(fields: [categoryId], references: [id])
+  categoryId   String
+  member       FamilyMember      @relation(fields: [memberId], references: [id])
+  memberId     String
+  creditCard   CreditCard?       @relation(fields: [creditCardId], references: [id])
+  creditCardId String?
+  type         TransactionType
+  isInterCard  Boolean           @default(false) // card-to-card carousel payment
+  source       TransactionSource @default(MANUAL)
+  date         DateTime
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([memberId, date])
+  @@index([categoryId, date])
+  @@index([creditCardId, date])
+  @@index([type, date])
+}
+
+enum TransactionType {
+  EXPENSE
+  INCOME
+  CARD_PAYMENT // payment toward a card (real money)
+  INTER_CARD_TRANSFER // carousel: paying one card with another
+  INTEREST_CHARGE
+  FEE
+}
+
+enum TransactionSource {
+  MANUAL // user entered
+  EMAIL_TRACKER // from Gmail webhook
+  PDF_IMPORT // from statement PDF
+  BANK_API // from Fintoc (Phase 3)
+}
+
+// ─── Categories ─────────────────────────────────────────────────
+
+model Category {
+  id           String        @id @default(cuid())
+  name         String // Spanish: "Supermercado", "Delivery"
+  nameEn       String // English: "Groceries", "Delivery"
+  icon         String? // lucide icon name
+  color        String? // hex color
+  isFixed      Boolean       @default(false) // fixed vs variable expense
+  isSystem     Boolean       @default(false) // system categories can't be deleted
+  sortOrder    Int           @default(0)
+  parentId     String?
+  parent       Category?     @relation("SubCategories", fields: [parentId], references: [id])
+  children     Category[]    @relation("SubCategories")
+  transactions Transaction[]
+  budgetItems  BudgetItem[]
+
+  @@index([isFixed])
+}
+
+// ─── Income ─────────────────────────────────────────────────────
+
+model Income {
+  id          String       @id @default(cuid())
+  amount      Int
+  source      String // "Salario Freddy", "Arriendo Propiedad 1"
+  member      FamilyMember @relation(fields: [memberId], references: [id])
+  memberId    String
+  isRecurring Boolean      @default(true)
+  date        DateTime
+  createdAt   DateTime     @default(now())
+
+  @@index([memberId, date])
+}
+
+// ─── Budget ─────────────────────────────────────────────────────
+
+model Budget {
+  id           String       @id @default(cuid())
+  family       Family       @relation(fields: [familyId], references: [id])
+  familyId     String
+  month        Int // 1-12
+  year         Int
+  totalIncome  Int          @default(0)
+  totalPlanned Int          @default(0)
+  items        BudgetItem[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@unique([familyId, month, year])
+}
+
+model BudgetItem {
+  id         String   @id @default(cuid())
+  budget     Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  budgetId   String
+  category   Category @relation(fields: [categoryId], references: [id])
+  categoryId String
+  planned    Int // budgeted amount
+  actual     Int      @default(0) // actual spent (updated via transactions)
+
+  @@unique([budgetId, categoryId])
+}
+
+// ─── Debt Payoff ────────────────────────────────────────────────
+
+model DebtPayoffPlan {
+  id                String   @id @default(cuid())
+  name              String
+  strategy          String // "avalanche" | "snowball" | "custom"
+  monthlyPayment    Int // amount allocated monthly to debt
+  isActive          Boolean  @default(true)
+  projectedMonths   Int?
+  projectedInterest Int? // total interest projected
+  startDate         DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ─── Properties ─────────────────────────────────────────────────
+
+model Property {
+  id              String  @id @default(cuid())
+  name            String // "Depto La Florida"
+  mortgagePayment Int // monthly mortgage (dividendo)
+  rentalIncome    Int // monthly rent received
+  isActive        Boolean @default(true)
+}
+
+// ─── Alerts ─────────────────────────────────────────────────────
+
+model Alert {
+  id          String    @id @default(cuid())
+  type        AlertType
+  title       String
+  message     String
+  data        String? // JSON string with extra context
+  triggerDate DateTime
+  isRead      Boolean   @default(false)
+  isSent      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  @@index([triggerDate, isSent])
+  @@index([isRead])
+}
+
+enum AlertType {
+  PAYMENT_DUE
+  BUDGET_THRESHOLD
+  BUDGET_EXCEEDED
+  DEBT_MILESTONE
+  UNUSUAL_SPENDING
+}
