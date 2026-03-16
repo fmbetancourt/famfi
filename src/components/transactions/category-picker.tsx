@@ -1,21 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  Car,
-  Gift,
-  GraduationCap,
-  Heart,
-  Home,
-  type LucideIcon,
-  MoreHorizontal,
-  Shirt,
-  ShoppingCart,
-  Truck,
-  UtensilsCrossed,
-  Wifi,
-  Zap,
-} from 'lucide-react'
+import { MoreHorizontal } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -23,6 +9,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import { CategoryIcon } from './category-icon'
 
 interface Category {
   id: string
@@ -36,35 +23,6 @@ interface CategoryPickerProps {
   value: string | null
   onChange: (id: string) => void
   error?: string
-}
-
-const ICON_MAP: Record<string, LucideIcon> = {
-  'shopping-cart': ShoppingCart,
-  'utensils-crossed': UtensilsCrossed,
-  truck: Truck,
-  car: Car,
-  heart: Heart,
-  home: Home,
-  zap: Zap,
-  wifi: Wifi,
-  'graduation-cap': GraduationCap,
-  shirt: Shirt,
-  gift: Gift,
-}
-
-const DEFAULT_ICON = ShoppingCart
-
-function CategoryIcon({
-  iconName,
-  color,
-  className,
-}: Readonly<{
-  iconName: string | null
-  color: string | null
-  className?: string
-}>) {
-  const Icon = (iconName && ICON_MAP[iconName]) || DEFAULT_ICON
-  return <Icon className={className} style={color ? { color } : undefined} />
 }
 
 const QUICK_PICK_ICONS = new Set([
