@@ -1,6 +1,5 @@
 import { protectedProcedure, router } from '../trpc'
 
-// Colors for the debt distribution chart
 const CHART_COLORS = [
   '#EF4444',
   '#F97316',
@@ -15,24 +14,72 @@ const CHART_COLORS = [
 ]
 
 export const dashboardRouter = router({
+  /**
+   * Summary card: total debt, card count with debt, estimated monthly interest,
+   * total credit limit, and available monthly budget (income - fixed expenses).
+   */
   getSummary: protectedProcedure.query(async ({ ctx }) => {
     const familyId = ctx.session.user.familyId
 
     const cards = await ctx.prisma.creditCard.findMany({
       where: { owner: { familyId }, isActive: true },
-      select: { currentBalance: true, creditLimit: true },
+      select: {
+        currentBalance: true,
+        creditLimit: true,
+        rateRevolving: true,
+      },
     })
 
+    const cardsWithDebt = cards.filter((c) => c.currentBalance > 0)
     const totalDebt = cards.reduce((sum, c) => sum + c.currentBalance, 0)
     const totalLimit = cards.reduce((sum, c) => sum + c.creditLimit, 0)
+    const monthlyInterest = cardsWithDebt.reduce(
+      (sum, c) => sum + Math.round((c.currentBalance * c.rateRevolving) / 100),
+      0
+    )
+
+    // Monthly available = total income - fixed expenses (from current budget)
+    const now = new Date()
+    const month = now.getMonth() + 1
+    const year = now.getFullYear()
+
+    const [incomes, budget] = await Promise.all([
+      ctx.prisma.income.aggregate({
+        where: { member: { familyId }, isRecurring: true },
+        _sum: { amount: true },
+      }),
+      ctx.prisma.budget.findUnique({
+        where: { familyId_month_year: { familyId, month, year } },
+        include: {
+          items: {
+            include: { category: { select: { isFixed: true } } },
+          },
+        },
+      }),
+    ])
+
+    const totalIncome = incomes._sum.amount ?? 0
+    const fixedExpenses = budget
+      ? budget.items
+          .filter((i) => i.category.isFixed)
+          .reduce((sum, i) => sum + i.planned, 0)
+      : 0
 
     return {
       totalDebt,
       totalLimit,
       cardCount: cards.length,
+      cardsWithDebt: cardsWithDebt.length,
+      monthlyInterest,
+      totalIncome,
+      availableAfterFixed: totalIncome - fixedExpenses,
     }
   }),
 
+  /**
+   * Debt distribution for pie chart: each card with balance, percentage, color.
+   * Top 4 individual + rest grouped.
+   */
   getDebtDistribution: protectedProcedure.query(async ({ ctx }) => {
     const familyId = ctx.session.user.familyId
 
@@ -46,13 +93,15 @@ export const dashboardRouter = router({
       orderBy: { currentBalance: 'desc' },
     })
 
-    // Top 4 cards individually, rest grouped as "Otras"
+    const totalDebt = cards.reduce((sum, c) => sum + c.currentBalance, 0)
     const top = cards.slice(0, 4)
     const rest = cards.slice(4)
 
     const slices = top.map((c, i) => ({
       name: c.name,
       value: c.currentBalance,
+      percentage:
+        totalDebt > 0 ? Math.round((c.currentBalance / totalDebt) * 100) : 0,
       color: CHART_COLORS[i],
     }))
 
@@ -61,27 +110,67 @@ export const dashboardRouter = router({
       slices.push({
         name: `Otras (${rest.length} tarjetas)`,
         value: otherTotal,
+        percentage:
+          totalDebt > 0 ? Math.round((otherTotal / totalDebt) * 100) : 0,
         color: '#94A3B8',
       })
     }
 
-    return slices
+    return { slices, totalDebt }
   }),
 
+  /**
+   * Upcoming payments: cards with active debt grouped by bank,
+   * with due day, days remaining, and total minimum payment per bank.
+   */
   getUpcomingPayments: protectedProcedure.query(async ({ ctx }) => {
     const familyId = ctx.session.user.familyId
 
     const cards = await ctx.prisma.creditCard.findMany({
-      where: { owner: { familyId }, isActive: true, currentBalance: { gt: 0 } },
-      select: { bank: true, paymentDueDay: true },
+      where: {
+        owner: { familyId },
+        isActive: true,
+        currentBalance: { gt: 0 },
+      },
+      select: {
+        bank: true,
+        paymentDueDay: true,
+        currentBalance: true,
+        rateRevolving: true,
+      },
     })
 
-    // Group by bank + due day (multiple cards from same bank share a due date)
-    const grouped = new Map<string, number>()
+    // Group by bank|dueDay, summing balances and interest for minimum payment
+    const grouped = new Map<
+      string,
+      {
+        bank: string
+        dueDay: number
+        totalBalance: number
+        totalMinPayment: number
+      }
+    >()
+
     for (const card of cards) {
       const key = `${card.bank}|${card.paymentDueDay}`
-      if (!grouped.has(key)) {
-        grouped.set(key, card.paymentDueDay)
+      const existing = grouped.get(key)
+      // Minimum payment estimate: ~2% of balance or the interest, whichever is higher
+      const interest = Math.round(
+        (card.currentBalance * card.rateRevolving) / 100
+      )
+      const twoPct = Math.round(card.currentBalance * 0.02)
+      const minPayment = Math.max(interest, twoPct)
+
+      if (existing) {
+        existing.totalBalance += card.currentBalance
+        existing.totalMinPayment += minPayment
+      } else {
+        grouped.set(key, {
+          bank: card.bank,
+          dueDay: card.paymentDueDay,
+          totalBalance: card.currentBalance,
+          totalMinPayment: minPayment,
+        })
       }
     }
 
@@ -91,42 +180,95 @@ export const dashboardRouter = router({
     function daysUntil(dueDay: number): number {
       if (day <= dueDay) return dueDay - day
       const nextMonth = new Date(
-        today.getFullYear(),
-        today.getMonth() + 1,
-        dueDay
+        Date.UTC(today.getFullYear(), today.getMonth() + 1, dueDay)
       )
-      return Math.ceil(
-        (nextMonth.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+      const fromUTC = new Date(
+        Date.UTC(today.getFullYear(), today.getMonth(), day)
+      )
+      return Math.round(
+        (nextMonth.getTime() - fromUTC.getTime()) / (1000 * 60 * 60 * 24)
       )
     }
 
-    const payments = Array.from(grouped.entries()).map(([key, dueDay]) => ({
-      bank: key.split('|')[0],
-      dueDay,
-      daysLeft: daysUntil(dueDay),
+    const payments = Array.from(grouped.values()).map((g) => ({
+      bank: g.bank,
+      dueDay: g.dueDay,
+      daysLeft: daysUntil(g.dueDay),
+      totalBalance: g.totalBalance,
+      minPayment: g.totalMinPayment,
     }))
 
     return payments.sort((a, b) => a.daysLeft - b.daysLeft)
   }),
 
-  getMonthlyBudget: protectedProcedure.query(async ({ ctx }) => {
+  /**
+   * Monthly spending by category vs budget.
+   * Sums actual transactions for the current month, grouped by category,
+   * and compares against budgeted amounts.
+   */
+  getMonthlySpending: protectedProcedure.query(async ({ ctx }) => {
     const familyId = ctx.session.user.familyId
     const now = new Date()
     const month = now.getMonth() + 1
     const year = now.getFullYear()
 
-    const budget = await ctx.prisma.budget.findUnique({
-      where: { familyId_month_year: { familyId, month, year } },
-      include: { items: true },
-    })
+    const startOfMonth = new Date(year, month - 1, 1)
+    const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999)
 
-    if (!budget) {
-      return { planned: 0, spent: 0, month, year }
+    const [transactions, budget] = await Promise.all([
+      ctx.prisma.transaction.groupBy({
+        by: ['categoryId'],
+        where: {
+          member: { familyId },
+          type: 'EXPENSE',
+          date: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { amount: true },
+      }),
+      ctx.prisma.budget.findUnique({
+        where: { familyId_month_year: { familyId, month, year } },
+        include: {
+          items: {
+            include: {
+              category: {
+                select: { id: true, name: true, icon: true, color: true },
+              },
+            },
+          },
+        },
+      }),
+    ])
+
+    // Build a map of categoryId -> actual spending
+    const spendingMap = new Map<string, number>()
+    for (const t of transactions) {
+      spendingMap.set(t.categoryId, t._sum.amount ?? 0)
     }
 
-    const planned = budget.totalPlanned
-    const spent = budget.items.reduce((sum, item) => sum + item.actual, 0)
+    const totalSpent = transactions.reduce(
+      (sum, t) => sum + (t._sum.amount ?? 0),
+      0
+    )
+    const totalPlanned = budget?.totalPlanned ?? 0
 
-    return { planned, spent, month, year }
+    // Build per-category breakdown if budget exists
+    const categories = budget
+      ? budget.items.map((item) => ({
+          categoryId: item.categoryId,
+          name: item.category.name,
+          icon: item.category.icon,
+          color: item.category.color,
+          planned: item.planned,
+          spent: spendingMap.get(item.categoryId) ?? 0,
+        }))
+      : []
+
+    return {
+      month,
+      year,
+      totalPlanned,
+      totalSpent,
+      categories,
+    }
   }),
 })
