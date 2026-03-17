@@ -2,6 +2,43 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod/v4'
 import { protectedProcedure, router } from '../trpc'
 
+/** Percentage at which a budget item transitions to "warning" status. */
+const BUDGET_WARNING_THRESHOLD = 0.8
+
+/**
+ * Emits budget threshold events after a transaction updates a BudgetItem.
+ * Phase 1 (Week 2-4): structured console.warn.
+ * Phase 2 (Week 5): replace with push/email notification service.
+ */
+function emitBudgetThresholdEvent(
+  budgetId: string,
+  categoryId: string,
+  planned: number,
+  actual: number
+): void {
+  if (planned === 0) return
+
+  const progress = actual / planned
+
+  if (progress > 1) {
+    console.warn('[BudgetEvent] EXCEEDED', {
+      budgetId,
+      categoryId,
+      planned,
+      actual,
+      progressPct: Math.round(progress * 100),
+    })
+  } else if (progress >= BUDGET_WARNING_THRESHOLD) {
+    console.warn('[BudgetEvent] WARNING', {
+      budgetId,
+      categoryId,
+      planned,
+      actual,
+      progressPct: Math.round(progress * 100),
+    })
+  }
+}
+
 const createInput = z.object({
   amount: z.int().positive(),
   description: z.string().min(1).max(200),
@@ -90,7 +127,7 @@ export const transactionRouter = router({
           })
         }
 
-        // 3. Update budget item actual if budget exists for this month
+        // 3. Update budget item actual and emit threshold events if a budget exists
         const budget = await tx.budget.findUnique({
           where: {
             familyId_month_year: {
@@ -103,7 +140,9 @@ export const transactionRouter = router({
         })
 
         if (budget) {
-          await tx.budgetItem
+          // Atomically increment actual and read the resulting values for threshold checks.
+          // .catch(() => null) handles the case where no budget item exists for this category.
+          const updatedItem = await tx.budgetItem
             .update({
               where: {
                 budgetId_categoryId: {
@@ -112,10 +151,18 @@ export const transactionRouter = router({
                 },
               },
               data: { actual: { increment: input.amount } },
+              select: { actual: true, planned: true },
             })
-            .catch(() => {
-              // No matching budget item for this category — that's fine, skip
-            })
+            .catch(() => null)
+
+          if (updatedItem) {
+            emitBudgetThresholdEvent(
+              budget.id,
+              input.categoryId,
+              updatedItem.planned,
+              updatedItem.actual
+            )
+          }
         }
 
         return transaction
