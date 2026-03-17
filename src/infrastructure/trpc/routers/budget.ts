@@ -81,7 +81,13 @@ export const budgetRouter = router({
           items: {
             include: {
               category: {
-                select: { id: true, name: true, icon: true, color: true },
+                select: {
+                  id: true,
+                  name: true,
+                  icon: true,
+                  color: true,
+                  isFixed: true,
+                },
               },
             },
             orderBy: { category: { sortOrder: 'asc' } },
