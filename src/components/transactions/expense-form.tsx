@@ -10,13 +10,6 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { trpc } from '@/infrastructure/trpc/client'
 import { AmountInput } from './amount-input'
 import { CategoryPicker } from './category-picker'
@@ -198,26 +191,23 @@ export function ExpenseForm({
               name='creditCardId'
               control={control}
               render={({ field }) => (
-                <Select
-                  value={field.value ?? undefined}
-                  onValueChange={(v) => field.onChange(v || null)}
+                <select
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value || null)}
+                  className='h-9 w-full rounded-md border bg-background px-2 text-sm'
                 >
-                  <SelectTrigger className='w-full'>
-                    <SelectValue placeholder='Selecciona tarjeta' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {memberCards?.map((card) => (
-                      <SelectItem key={card.id} value={card.id}>
-                        {card.bank} ···{card.lastFourDigits}
-                      </SelectItem>
-                    ))}
-                    {(!memberCards || memberCards.length === 0) && (
-                      <div className='px-2 py-3 text-center text-sm text-muted-foreground'>
-                        Sin tarjetas activas
-                      </div>
-                    )}
-                  </SelectContent>
-                </Select>
+                  <option value=''>Selecciona tarjeta</option>
+                  {memberCards?.map((card) => (
+                    <option key={card.id} value={card.id}>
+                      {card.bank} ···{card.lastFourDigits}
+                    </option>
+                  ))}
+                  {(!memberCards || memberCards.length === 0) && (
+                    <option value='' disabled>
+                      Sin tarjetas activas
+                    </option>
+                  )}
+                </select>
               )}
             />
           </div>
