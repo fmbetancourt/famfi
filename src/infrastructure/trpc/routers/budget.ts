@@ -386,4 +386,19 @@ export const budgetRouter = router({
       const repo = new PrismaBudgetRepository(ctx.prisma)
       await repo.recalculateActuals(budget.id)
     }),
+
+  /**
+   * Returns the family's total monthly recurring income.
+   * Used by the budget create form to display the income comparison and
+   * over-budget alert before the budget is saved.
+   */
+  getTotalIncome: protectedProcedure.query(async ({ ctx }) => {
+    const familyId = ctx.session.user.familyId
+    return await ctx.prisma.income
+      .aggregate({
+        where: { member: { familyId }, isRecurring: true },
+        _sum: { amount: true },
+      })
+      .then((r) => r._sum.amount ?? 0)
+  }),
 })

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import {
+  BookOpen,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -82,6 +83,27 @@ function nextMonth(
   return { month: month + 1, year }
 }
 
+// ─── Initial budget template (Moreno-Gutiérrez family, from financial-context.md) ─
+
+/**
+ * Pre-fills the create form with the family's known monthly expense structure.
+ * Total ~$6,674,000 intentionally exceeds $6,200,000 income by $474,000 —
+ * the user sees the over-budget alert and must trim the amounts to fit.
+ * Keyed by category nameEn (stable across seeds).
+ */
+const INITIAL_TEMPLATE: Record<string, number> = {
+  Mortgages: 2_000_000, // dividendos 3 propiedades
+  Rent: 500_000, // arriendo vivienda propia
+  'Common Expenses': 150_000, // gastos comunes
+  Utilities: 200_000, // luz, agua, gas, internet
+  'Car & Transport': 650_000, // combustible, TAG, mantención, seguros auto
+  Insurance: 250_000, // seguros de vida y otros
+  'Mom Allowance': 124_000, // mesadas mamá Freddy + mamá Rahydee
+  Groceries: 600_000, // LiderBCI con descuento empleado
+  'Dining & Delivery': 700_000, // delivery + restaurantes
+  'Credit Card Payment': 1_500_000, // objetivo pago deuda TDC (avalanche)
+}
+
 // ─── Local types (mirror tRPC output shape) ───────────────────────────────────
 
 interface BudgetItemDetail {
@@ -111,9 +133,19 @@ interface BudgetDetail {
   items: BudgetItemDetail[]
 }
 
+/** The item being edited in the bottom sheet. */
+interface BudgetEditTarget {
+  id: string
+  name: string
+  icon: string | null
+  color: string | null
+  currentPlanned: number
+}
+
 type CategoryMeta = {
   id: string
   name: string
+  nameEn: string | null
   icon: string | null
   color: string | null
   isFixed: boolean
@@ -197,132 +229,218 @@ function BudgetSummaryCard({ budget }: Readonly<{ budget: BudgetDetail }>) {
 
 // ─── CategoryRow ──────────────────────────────────────────────────────────────
 
+/** Tappable row — opens the EditItemSheet on click. No inline editing. */
 function CategoryRow({
   item,
-  isEditing,
-  editingValue,
-  isSaving,
-  onEdit,
-  onSave,
-  onCancel,
-  onEditValueChange,
+  onTap,
 }: Readonly<{
   item: BudgetItemDetail
-  isEditing: boolean
-  editingValue: string
-  isSaving: boolean
-  onEdit: () => void
-  onSave: () => void
-  onCancel: () => void
-  onEditValueChange: (v: string) => void
+  onTap: () => void
 }>) {
   return (
-    <Card className='overflow-hidden'>
-      <CardContent className='p-3'>
-        <div className='flex items-start gap-3'>
-          {/* Category icon badge */}
+    <button
+      onClick={onTap}
+      className='w-full text-left active:opacity-80'
+      aria-label={`Editar ${item.category.name}`}
+    >
+      <Card className='overflow-hidden'>
+        <CardContent className='p-3'>
+          <div className='flex items-start gap-3'>
+            {/* Category icon badge */}
+            <div
+              className='flex size-9 shrink-0 items-center justify-center rounded-lg'
+              style={{
+                backgroundColor: item.category.color
+                  ? `${item.category.color}25`
+                  : '#94a3b825',
+              }}
+            >
+              <CategoryIcon
+                iconName={item.category.icon}
+                color={item.category.color}
+                className='size-4'
+              />
+            </div>
+
+            {/* Main content */}
+            <div className='min-w-0 flex-1'>
+              <div className='flex items-center justify-between gap-2'>
+                <span className='truncate text-sm font-medium'>
+                  {item.category.name}
+                </span>
+                <Pencil className='size-3.5 shrink-0 text-muted-foreground' />
+              </div>
+
+              {/* Amounts */}
+              <div className='mt-1 flex items-baseline justify-between text-xs'>
+                <span className='text-muted-foreground'>
+                  <span className={statusTextColor(item.status)}>
+                    {formatCLP(item.actual)}
+                  </span>
+                  {' / '}
+                  <span>{formatCLP(item.planned)}</span>
+                </span>
+                <span className={statusTextColor(item.status)}>
+                  {item.progress}%
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div className='mt-1.5 h-1.5 rounded-full bg-muted'>
+                <div
+                  className={`h-1.5 rounded-full transition-all ${statusBarColor(item.status)}`}
+                  style={{ width: `${Math.min(item.progress, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </button>
+  )
+}
+
+// ─── EditItemSheet ────────────────────────────────────────────────────────────
+
+/**
+ * Bottom sheet that appears when the user taps a CategoryRow.
+ * Shows current planned amount, an input for the new amount, and a live
+ * preview of how the change affects the overall budget vs income.
+ */
+function EditItemSheet({
+  target,
+  currentBudgetTotal,
+  totalIncome,
+  value,
+  isSaving,
+  saveError,
+  onValueChange,
+  onSave,
+  onClose,
+}: Readonly<{
+  target: BudgetEditTarget
+  currentBudgetTotal: number
+  totalIncome: number
+  value: string
+  isSaving: boolean
+  saveError: string | null
+  onValueChange: (v: string) => void
+  onSave: () => void
+  onClose: () => void
+}>) {
+  const newAmount = Number.parseInt(value.replaceAll(/\D/g, ''), 10)
+  const isValidAmount = !Number.isNaN(newAmount) && newAmount > 0
+  const delta = isValidAmount ? newAmount - target.currentPlanned : 0
+  const newTotal = currentBudgetTotal + delta
+  const remainingAfter = totalIncome - newTotal
+
+  return (
+    <div className='fixed inset-0 z-50'>
+      {/* Backdrop — native button enables keyboard dismiss */}
+      <button
+        type='button'
+        className='absolute inset-0 cursor-default bg-black/40'
+        onClick={onClose}
+        aria-label='Cerrar'
+        tabIndex={-1}
+      />
+      {/* Sheet panel — sibling of backdrop so clicks don't bubble to it */}
+      <div className='absolute bottom-0 left-0 right-0 rounded-t-2xl bg-background p-6 pb-10 shadow-2xl'>
+        {/* Drag handle */}
+        <div className='mx-auto mb-5 h-1 w-10 rounded-full bg-muted' />
+
+        {/* Category header */}
+        <div className='mb-5 flex items-center gap-3'>
           <div
-            className='flex size-9 shrink-0 items-center justify-center rounded-lg'
+            className='flex size-10 shrink-0 items-center justify-center rounded-xl'
             style={{
-              backgroundColor: item.category.color
-                ? `${item.category.color}25`
-                : '#94a3b825',
+              backgroundColor: target.color ? `${target.color}25` : '#94a3b825',
             }}
           >
             <CategoryIcon
-              iconName={item.category.icon}
-              color={item.category.color}
-              className='size-4'
+              iconName={target.icon}
+              color={target.color}
+              className='size-5'
             />
           </div>
-
-          {/* Main content */}
-          <div className='min-w-0 flex-1'>
-            <div className='flex items-center justify-between gap-2'>
-              <span className='truncate text-sm font-medium'>
-                {item.category.name}
-              </span>
-
-              {/* Edit / save / cancel controls */}
-              {isEditing ? (
-                <div className='flex shrink-0 items-center gap-0.5'>
-                  <button
-                    onClick={onCancel}
-                    className='rounded p-1 text-muted-foreground hover:bg-muted'
-                    aria-label='Cancelar edición'
-                  >
-                    <X className='size-4' />
-                  </button>
-                  <button
-                    onClick={onSave}
-                    disabled={isSaving}
-                    className='rounded p-1 text-green-600 hover:bg-muted disabled:opacity-50'
-                    aria-label='Guardar monto'
-                  >
-                    {isSaving ? (
-                      <Loader2 className='size-4 animate-spin' />
-                    ) : (
-                      <Check className='size-4' />
-                    )}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={onEdit}
-                  className='shrink-0 rounded p-1 text-muted-foreground hover:bg-muted'
-                  aria-label='Editar monto planificado'
-                >
-                  <Pencil className='size-4' />
-                </button>
-              )}
-            </div>
-
-            {/* Inline number input when editing */}
-            {isEditing ? (
-              <div className='mt-1.5'>
-                <input
-                  type='number'
-                  value={editingValue}
-                  onChange={(e) => onEditValueChange(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') onSave()
-                    if (e.key === 'Escape') onCancel()
-                  }}
-                  className='h-8 w-full rounded-md border bg-background px-2 text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
-                  autoFocus
-                  placeholder='Monto planificado'
-                  min={1}
-                />
-              </div>
-            ) : (
-              <>
-                {/* Amounts */}
-                <div className='mt-1 flex items-baseline justify-between text-xs'>
-                  <span className='text-muted-foreground'>
-                    <span className={statusTextColor(item.status)}>
-                      {formatCLP(item.actual)}
-                    </span>
-                    {' / '}
-                    <span>{formatCLP(item.planned)}</span>
-                  </span>
-                  <span className={statusTextColor(item.status)}>
-                    {item.progress}%
-                  </span>
-                </div>
-
-                {/* Progress bar */}
-                <div className='mt-1.5 h-1.5 rounded-full bg-muted'>
-                  <div
-                    className={`h-1.5 rounded-full transition-all ${statusBarColor(item.status)}`}
-                    style={{ width: `${Math.min(item.progress, 100)}%` }}
-                  />
-                </div>
-              </>
-            )}
+          <div>
+            <p className='font-semibold'>{target.name}</p>
+            <p className='text-sm text-muted-foreground'>
+              Actual: {formatCLP(target.currentPlanned)}
+            </p>
           </div>
+          <button
+            onClick={onClose}
+            className='ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-muted'
+            aria-label='Cerrar'
+          >
+            <X className='size-5' />
+          </button>
         </div>
-      </CardContent>
-    </Card>
+
+        {/* Amount input */}
+        <div className='mb-4'>
+          <p className='mb-1.5 text-sm font-medium'>Nuevo monto planificado</p>
+          <input
+            type='number'
+            value={value}
+            onChange={(e) => onValueChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && isValidAmount) onSave()
+              if (e.key === 'Escape') onClose()
+            }}
+            className='h-12 w-full rounded-xl border bg-background px-4 text-lg font-semibold [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
+            autoFocus
+            placeholder='0'
+            min={1}
+          />
+        </div>
+
+        {/* Budget impact preview */}
+        <div className='mb-4 rounded-xl bg-muted/50 p-3 text-sm'>
+          <div className='flex justify-between'>
+            <span className='text-muted-foreground'>
+              Nuevo total planificado
+            </span>
+            <span className='font-semibold'>
+              {isValidAmount
+                ? formatCLP(newTotal)
+                : formatCLP(currentBudgetTotal)}
+            </span>
+          </div>
+          {totalIncome > 0 && isValidAmount && (
+            <div
+              className={`mt-1 flex justify-between font-medium ${remainingAfter < 0 ? 'text-red-600' : 'text-green-600'}`}
+            >
+              <span>
+                {remainingAfter < 0 ? 'Excede ingreso en' : 'Disponible'}
+              </span>
+              <span>{formatCLP(Math.abs(remainingAfter))}</span>
+            </div>
+          )}
+        </div>
+
+        {saveError && (
+          <p className='mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive'>
+            {saveError}
+          </p>
+        )}
+
+        {/* Actions */}
+        <button
+          onClick={onSave}
+          disabled={!isValidAmount || isSaving}
+          className='flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-sm font-semibold text-primary-foreground disabled:opacity-50'
+        >
+          {isSaving ? (
+            <Loader2 className='size-4 animate-spin' />
+          ) : (
+            <Check className='size-4' />
+          )}
+          Actualizar
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -338,6 +456,7 @@ function EmptyState({
   onCreateManual,
   onDuplicate,
   onSuggestion,
+  onTemplate,
 }: Readonly<{
   monthName: string
   year: number
@@ -348,6 +467,7 @@ function EmptyState({
   onCreateManual: () => void
   onDuplicate: () => void
   onSuggestion: () => void
+  onTemplate: () => void
 }>) {
   return (
     <div className='flex flex-col items-center gap-5 py-8 text-center'>
@@ -398,6 +518,14 @@ function EmptyState({
         >
           <Sparkles className='size-4' />
           Usar sugerencia automática
+        </button>
+
+        <button
+          onClick={onTemplate}
+          className='flex items-center justify-center gap-2 rounded-xl border px-4 py-3.5 text-sm font-medium'
+        >
+          <BookOpen className='size-4' />
+          Plantilla familiar inicial
         </button>
       </div>
     </div>
@@ -451,24 +579,33 @@ function CategoryAmountRow({
 
 // ─── CreateForm ───────────────────────────────────────────────────────────────
 
+function createFormTitle(mode: 'manual' | 'suggestion' | 'template'): string {
+  if (mode === 'suggestion') return 'Presupuesto Sugerido'
+  if (mode === 'template') return 'Plantilla Familiar'
+  return 'Nuevo Presupuesto'
+}
+
 function CreateForm({
   mode,
   categories,
   isLoadingCategories,
   baseAmounts,
   pendingAmounts,
+  totalIncome,
   isCreating,
   createError,
   onAmountChange,
   onCancel,
   onSubmit,
 }: Readonly<{
-  mode: 'manual' | 'suggestion'
+  mode: 'manual' | 'suggestion' | 'template'
   categories: { fixed: CategoryMeta[]; variable: CategoryMeta[] } | undefined
   isLoadingCategories: boolean
-  /** Suggestion amounts used as defaults; pendingAmounts contains explicit overrides. */
+  /** Suggestion/template amounts used as defaults; pendingAmounts contains explicit overrides. */
   baseAmounts: Record<string, number>
   pendingAmounts: Record<string, number>
+  /** Family's monthly recurring income — used for the over-budget alert. 0 while loading. */
+  totalIncome: number
   isCreating: boolean
   createError: string | null
   onAmountChange: (catId: string, amount: number) => void
@@ -483,6 +620,8 @@ function CreateForm({
     (sum, cat) => sum + (pendingAmounts[cat.id] ?? baseAmounts[cat.id] ?? 0),
     0
   )
+  const isOverBudget = totalIncome > 0 && totalPlanned > totalIncome
+  const remaining = totalIncome - totalPlanned
 
   if (isLoadingCategories) {
     return (
@@ -501,9 +640,7 @@ function CreateForm({
     <div className='flex flex-col gap-4'>
       {/* Form header */}
       <div className='flex items-center justify-between'>
-        <h2 className='font-semibold'>
-          {mode === 'suggestion' ? 'Presupuesto Sugerido' : 'Nuevo Presupuesto'}
-        </h2>
+        <h2 className='font-semibold'>{createFormTitle(mode)}</h2>
         <button
           onClick={onCancel}
           className='text-sm text-muted-foreground hover:text-foreground'
@@ -566,10 +703,34 @@ function CreateForm({
 
       {/* Sticky submit footer */}
       <div className='sticky bottom-20 rounded-xl border bg-card p-4 shadow-lg'>
-        <div className='mb-3 flex justify-between text-sm'>
-          <span className='text-muted-foreground'>Total planificado</span>
-          <span className='font-semibold'>{formatCLP(totalPlanned)}</span>
+        <div className='mb-3 flex flex-col gap-1 text-sm'>
+          <div className='flex justify-between'>
+            <span className='text-muted-foreground'>Total planificado</span>
+            <span className='font-semibold'>{formatCLP(totalPlanned)}</span>
+          </div>
+          {totalIncome > 0 && (
+            <>
+              <div className='flex justify-between text-muted-foreground'>
+                <span>Ingreso mensual</span>
+                <span>{formatCLP(totalIncome)}</span>
+              </div>
+              <div
+                className={`flex justify-between font-medium ${isOverBudget ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}
+              >
+                <span>{isOverBudget ? 'Excede ingreso en' : 'Disponible'}</span>
+                <span>{formatCLP(Math.abs(remaining))}</span>
+              </div>
+            </>
+          )}
         </div>
+
+        {isOverBudget && (
+          <p className='mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/20 dark:text-red-400'>
+            El presupuesto excede el ingreso. Ajusta los montos antes de
+            guardar.
+          </p>
+        )}
+
         <button
           onClick={onSubmit}
           disabled={totalPlanned === 0 || isCreating}
@@ -587,6 +748,18 @@ function CreateForm({
   )
 }
 
+// ─── BudgetPageView helpers ───────────────────────────────────────────────────
+
+function resolveBaseAmounts(
+  mode: 'manual' | 'suggestion' | 'template' | null,
+  suggestionsMap: Record<string, number>,
+  templateBaseAmounts: Record<string, number>
+): Record<string, number> {
+  if (mode === 'suggestion') return suggestionsMap
+  if (mode === 'template') return templateBaseAmounts
+  return {}
+}
+
 // ─── BudgetPageView (main export) ─────────────────────────────────────────────
 
 export function BudgetPageView({
@@ -598,11 +771,11 @@ export function BudgetPageView({
 }>) {
   const [month, setMonth] = useState(initialMonth)
   const [year, setYear] = useState(initialYear)
-  const [editingItemId, setEditingItemId] = useState<string | null>(null)
-  const [editingValue, setEditingValue] = useState('')
-  const [createMode, setCreateMode] = useState<'manual' | 'suggestion' | null>(
-    null
-  )
+  const [editingItem, setEditingItem] = useState<BudgetEditTarget | null>(null)
+  const [editSheetValue, setEditSheetValue] = useState('')
+  const [createMode, setCreateMode] = useState<
+    'manual' | 'suggestion' | 'template' | null
+  >(null)
   const [pendingAmounts, setPendingAmounts] = useState<Record<string, number>>(
     {}
   )
@@ -625,13 +798,36 @@ export function BudgetPageView({
       { enabled: createMode === 'suggestion' }
     )
 
-  // Build a lookup of suggestion amounts; used as base values in the create form.
-  // pendingAmounts holds user overrides on top of these base values.
+  // Build a lookup of suggestion amounts; used as base values in suggestion mode.
   const suggestionsMap: Record<string, number> = {}
   if (suggestions) {
     for (const s of suggestions)
       suggestionsMap[s.categoryId] = s.suggestedAmount
   }
+
+  const { data: totalIncomeData } = trpc.budget.getTotalIncome.useQuery(
+    undefined,
+    { enabled: createMode !== null }
+  )
+
+  // Resolve INITIAL_TEMPLATE amounts to categoryIds using the nameEn stable key.
+  const templateBaseAmounts: Record<string, number> = {}
+  if (categories) {
+    for (const cat of [
+      ...(categories.fixed ?? []),
+      ...(categories.variable ?? []),
+    ]) {
+      const amount = INITIAL_TEMPLATE[cat.nameEn ?? '']
+      if (amount) templateBaseAmounts[cat.id] = amount
+    }
+  }
+
+  // Base amounts differ by mode; pendingAmounts always wins on top.
+  const baseAmounts = resolveBaseAmounts(
+    createMode,
+    suggestionsMap,
+    templateBaseAmounts
+  )
 
   const createMutation = trpc.budget.create.useMutation({
     onSuccess: () => {
@@ -647,7 +843,7 @@ export function BudgetPageView({
 
   const updateItemMutation = trpc.budget.updateItem.useMutation({
     onSuccess: () => {
-      setEditingItemId(null)
+      setEditingItem(null)
       utils.budget.getByMonth.invalidate({ month, year })
     },
   })
@@ -660,7 +856,7 @@ export function BudgetPageView({
     setYear(prev.year)
     setCreateMode(null)
     setPendingAmounts({})
-    setEditingItemId(null)
+    setEditingItem(null)
   }
 
   function goToNext() {
@@ -668,7 +864,7 @@ export function BudgetPageView({
     setYear(next.year)
     setCreateMode(null)
     setPendingAmounts({})
-    setEditingItemId(null)
+    setEditingItem(null)
   }
 
   function handleDuplicate() {
@@ -680,23 +876,33 @@ export function BudgetPageView({
     })
   }
 
-  function startEdit(itemId: string, currentPlanned: number) {
-    setEditingItemId(itemId)
-    setEditingValue(String(currentPlanned))
+  function openEditSheet(item: BudgetItemDetail) {
+    setEditingItem({
+      id: item.id,
+      name: item.category.name,
+      icon: item.category.icon,
+      color: item.category.color,
+      currentPlanned: item.planned,
+    })
+    setEditSheetValue(String(item.planned))
   }
 
-  function saveEdit(itemId: string) {
-    const amount = Number.parseInt(editingValue.replaceAll(/\D/g, ''), 10)
+  function saveEditSheet() {
+    if (!editingItem) return
+    const amount = Number.parseInt(editSheetValue.replaceAll(/\D/g, ''), 10)
     if (!Number.isNaN(amount) && amount > 0) {
-      updateItemMutation.mutate({ budgetItemId: itemId, planned: amount })
+      updateItemMutation.mutate({
+        budgetItemId: editingItem.id,
+        planned: amount,
+      })
     } else {
-      setEditingItemId(null)
+      setEditingItem(null)
     }
   }
 
   function handleCreate() {
-    // Merge base suggestion amounts with explicit user overrides
-    const effectiveAmounts = { ...suggestionsMap, ...pendingAmounts }
+    // Merge base amounts (suggestion/template) with explicit user overrides
+    const effectiveAmounts = { ...baseAmounts, ...pendingAmounts }
     const items = Object.entries(effectiveAmounts)
       .filter(([, v]) => v > 0)
       .map(([categoryId, planned]) => ({ categoryId, planned }))
@@ -766,17 +972,22 @@ export function BudgetPageView({
           }}
           onDuplicate={handleDuplicate}
           onSuggestion={() => setCreateMode('suggestion')}
+          onTemplate={() => {
+            setCreateMode('template')
+            setPendingAmounts({})
+          }}
         />
       )}
 
-      {/* Create form — manual or suggestion */}
+      {/* Create form — manual, suggestion, or template */}
       {!isLoading && !budget && createMode !== null && (
         <CreateForm
           mode={createMode}
           categories={categories}
           isLoadingCategories={isCreateLoading}
-          baseAmounts={suggestionsMap}
+          baseAmounts={baseAmounts}
           pendingAmounts={pendingAmounts}
+          totalIncome={totalIncomeData ?? 0}
           isCreating={createMutation.isPending}
           createError={createMutation.error?.message ?? null}
           onAmountChange={(catId, amount) =>
@@ -805,15 +1016,7 @@ export function BudgetPageView({
                   <CategoryRow
                     key={item.id}
                     item={item}
-                    isEditing={editingItemId === item.id}
-                    editingValue={editingValue}
-                    isSaving={
-                      updateItemMutation.isPending && editingItemId === item.id
-                    }
-                    onEdit={() => startEdit(item.id, item.planned)}
-                    onSave={() => saveEdit(item.id)}
-                    onCancel={() => setEditingItemId(null)}
-                    onEditValueChange={setEditingValue}
+                    onTap={() => openEditSheet(item)}
                   />
                 ))}
               </div>
@@ -830,15 +1033,7 @@ export function BudgetPageView({
                   <CategoryRow
                     key={item.id}
                     item={item}
-                    isEditing={editingItemId === item.id}
-                    editingValue={editingValue}
-                    isSaving={
-                      updateItemMutation.isPending && editingItemId === item.id
-                    }
-                    onEdit={() => startEdit(item.id, item.planned)}
-                    onSave={() => saveEdit(item.id)}
-                    onCancel={() => setEditingItemId(null)}
-                    onEditValueChange={setEditingValue}
+                    onTap={() => openEditSheet(item)}
                   />
                 ))}
               </div>
@@ -847,6 +1042,21 @@ export function BudgetPageView({
 
           {donutData.length > 0 && <BudgetDonutChart data={donutData} />}
         </>
+      )}
+
+      {/* Bottom sheet for editing an existing budget item */}
+      {editingItem && budget && (
+        <EditItemSheet
+          target={editingItem}
+          currentBudgetTotal={budget.totalPlanned}
+          totalIncome={budget.totalIncome}
+          value={editSheetValue}
+          isSaving={updateItemMutation.isPending}
+          saveError={updateItemMutation.error?.message ?? null}
+          onValueChange={setEditSheetValue}
+          onSave={saveEditSheet}
+          onClose={() => setEditingItem(null)}
+        />
       )}
     </div>
   )
