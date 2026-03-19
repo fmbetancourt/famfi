@@ -28,7 +28,7 @@ function formatCLP(amount: number): string {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function NoPlanState({ totalDebt }: { totalDebt: number }) {
+function NoPlanState({ totalDebt }: Readonly<{ totalDebt: number }>) {
   return (
     <Card>
       <CardContent className='flex flex-col gap-4 pt-5 sm:flex-row sm:items-center sm:justify-between'>
@@ -61,7 +61,7 @@ interface ProgressBarProps {
   value: number
 }
 
-function ProgressBar({ value }: ProgressBarProps) {
+function ProgressBar({ value }: Readonly<ProgressBarProps>) {
   const clamped = Math.min(100, Math.max(0, value))
   return (
     <div className='h-2 w-full overflow-hidden rounded-full bg-muted'>
