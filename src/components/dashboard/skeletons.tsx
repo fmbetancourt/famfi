@@ -74,6 +74,36 @@ export function BudgetSkeleton() {
   )
 }
 
+export function DebtPlanWidgetSkeleton() {
+  return (
+    <Card>
+      <CardContent className='pt-5'>
+        <div className='mb-4 flex items-start justify-between gap-4'>
+          <div className='space-y-2'>
+            <Skeleton className='h-3 w-40' />
+            <Skeleton className='h-10 w-48' />
+            <Skeleton className='h-4 w-32' />
+          </div>
+          <Skeleton className='size-6 rounded' />
+        </div>
+        <div className='mb-4 space-y-1.5'>
+          <div className='flex justify-between'>
+            <Skeleton className='h-3 w-36' />
+            <Skeleton className='h-3 w-8' />
+          </div>
+          <Skeleton className='h-2 w-full rounded-full' />
+          <div className='flex justify-between'>
+            <Skeleton className='h-3 w-28' />
+            <Skeleton className='h-3 w-28' />
+          </div>
+        </div>
+        <Skeleton className='mb-4 h-16 w-full rounded-lg' />
+        <Skeleton className='h-9 w-full rounded-md' />
+      </CardContent>
+    </Card>
+  )
+}
+
 export function ChartSkeleton() {
   return (
     <Card>

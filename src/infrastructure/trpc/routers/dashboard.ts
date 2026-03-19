@@ -1,3 +1,8 @@
+import {
+  type CardInput,
+  DebtCalculator,
+  type PayoffStrategy,
+} from '@/domain/services/DebtCalculator'
 import { protectedProcedure, router } from '../trpc'
 
 // ─── Budget deviation helpers ─────────────────────────────────────────────────
@@ -217,6 +222,98 @@ export const dashboardRouter = router({
     }))
 
     return payments.sort((a, b) => a.daysLeft - b.daysLeft)
+  }),
+
+  /**
+   * Debt plan widget: returns either a "no plan" summary (total debt + CTA)
+   * or the active plan status (remaining months, progress, next freed card).
+   *
+   * Re-runs DebtCalculator with current balances so remaining months stay
+   * accurate even as the family pays down debt month over month.
+   * Falls back to projectedMonths if re-simulation fails (e.g. payment
+   * is now below minimum due to new spending on a card).
+   */
+  getDebtPlanWidget: protectedProcedure.query(async ({ ctx }) => {
+    const familyId = ctx.session.user.familyId
+
+    const [activePlan, dbCards] = await Promise.all([
+      ctx.prisma.debtPayoffPlan.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      ctx.prisma.creditCard.findMany({
+        where: {
+          owner: { familyId },
+          currentBalance: { gt: 0 },
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          currentBalance: true,
+          rateRevolving: true,
+        },
+      }),
+    ])
+
+    const currentTotalDebt = dbCards.reduce(
+      (sum, c) => sum + c.currentBalance,
+      0
+    )
+
+    if (!activePlan) {
+      return { hasPlan: false as const, totalDebt: currentTotalDebt }
+    }
+
+    // Re-simulate with current balances for live remaining months and next card
+    const cardInputs: CardInput[] = dbCards.map((c) => ({
+      id: c.id,
+      name: c.name,
+      balance: c.currentBalance,
+      monthlyRate: c.rateRevolving,
+    }))
+
+    const strategy: PayoffStrategy =
+      activePlan.strategy === 'snowball' ? 'snowball' : 'avalanche'
+
+    let remainingMonths = activePlan.projectedMonths ?? 0
+    let nextCard: { name: string; month: number } | null = null
+
+    if (cardInputs.length > 0) {
+      try {
+        const sim = DebtCalculator.simulatePayoff(
+          cardInputs,
+          activePlan.monthlyPayment,
+          strategy
+        )
+        remainingMonths = sim.totalMonths
+        if (sim.freedCards[0]) {
+          nextCard = {
+            name: sim.freedCards[0].cardName,
+            month: sim.freedCards[0].month,
+          }
+        }
+      } catch {
+        // Monthly payment now below minimum — keep projectedMonths as fallback
+      }
+    }
+
+    // Algebraic derivation: initial debt = total payments − total interest
+    // (principal = monthlyPayment × months − projectedInterest)
+    const estimatedInitialDebt =
+      activePlan.monthlyPayment * (activePlan.projectedMonths ?? 0) -
+      (activePlan.projectedInterest ?? 0)
+
+    return {
+      hasPlan: true as const,
+      planName: activePlan.name,
+      monthlyPayment: activePlan.monthlyPayment,
+      remainingMonths,
+      originalMonths: activePlan.projectedMonths ?? 0,
+      estimatedInitialDebt,
+      currentTotalDebt,
+      nextCard,
+    }
   }),
 
   /**
