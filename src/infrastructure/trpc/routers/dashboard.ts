@@ -1,5 +1,23 @@
 import { protectedProcedure, router } from '../trpc'
 
+// ─── Budget deviation helpers ─────────────────────────────────────────────────
+
+/** Mirrors the same threshold used in the budget router. */
+const WARNING_THRESHOLD = 0.8
+
+type DeviationStatus = 'ok' | 'warning' | 'exceeded'
+
+function computeDeviationStatus(
+  planned: number,
+  actual: number
+): DeviationStatus {
+  if (actual > planned) return 'exceeded'
+  if (planned > 0 && actual / planned >= WARNING_THRESHOLD) return 'warning'
+  return 'ok'
+}
+
+// ─── Chart colors ─────────────────────────────────────────────────────────────
+
 const CHART_COLORS = [
   '#EF4444',
   '#F97316',
@@ -263,12 +281,35 @@ export const dashboardRouter = router({
         }))
       : []
 
+    const hasBudget = budget !== null
+    const dayOfMonth = now.getDate()
+    const daysInMonth = new Date(year, month, 0).getDate()
+
+    // Top 3 categories by spending progress — only those with actual spending.
+    const topDeviations = categories
+      .filter((c) => c.spent > 0)
+      .map((c) => ({
+        name: c.name,
+        icon: c.icon,
+        color: c.color,
+        planned: c.planned,
+        actual: c.spent,
+        progress: c.planned > 0 ? Math.round((c.spent / c.planned) * 100) : 0,
+        status: computeDeviationStatus(c.planned, c.spent),
+      }))
+      .sort((a, b) => b.progress - a.progress)
+      .slice(0, 3)
+
     return {
       month,
       year,
       totalPlanned,
       totalSpent,
+      hasBudget,
       categories,
+      topDeviations,
+      dayOfMonth,
+      daysInMonth,
     }
   }),
 })

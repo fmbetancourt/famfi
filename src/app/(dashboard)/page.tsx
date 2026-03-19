@@ -70,6 +70,10 @@ async function DashboardContent() {
           planned={spending.totalPlanned}
           spent={spending.totalSpent}
           month={currentMonth}
+          hasBudget={spending.hasBudget}
+          dayOfMonth={spending.dayOfMonth}
+          daysInMonth={spending.daysInMonth}
+          topDeviations={spending.topDeviations}
         />
 
         <div className='md:col-span-2'>
