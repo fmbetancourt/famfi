@@ -12,15 +12,8 @@ import {
   TrendingDown,
   Trophy,
 } from 'lucide-react'
-import {
-  Bar,
-  BarChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
 import { trpc } from '@/infrastructure/trpc/client'
+import { DebtPayoffTimeline } from './debt-payoff-timeline'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type {
   DebtPayoffSimulation,
@@ -53,13 +46,6 @@ function useDebounce<T>(value: T, delay: number): T {
     return () => clearTimeout(timer)
   }, [value, delay, setDebounced])
   return debounced
-}
-
-function timelineBarColor(month: number, totalMonths: number): string {
-  const pct = totalMonths > 0 ? month / totalMonths : 0
-  if (pct <= 0.33) return '#22c55e'
-  if (pct <= 0.66) return '#f59e0b'
-  return '#ef4444'
 }
 
 function utilizationBarColor(pct: number): string {
@@ -270,66 +256,6 @@ function CardRow({ card }: Readonly<{ card: CreditCardData }>) {
   )
 }
 
-// ─── FreedCardsChart ──────────────────────────────────────────────────────────
-
-function FreedCardsChart({
-  freedCards,
-  totalMonths,
-}: Readonly<{
-  freedCards: DebtPayoffSimulation['freedCards']
-  totalMonths: number
-}>) {
-  if (freedCards.length === 0) return null
-
-  // cardId is unique per simulation (each card is freed exactly once).
-  // fill is set per data item — Recharts v3 reads it directly, replacing the deprecated Cell.
-  const chartData = freedCards.map((fc) => ({
-    id: fc.cardId,
-    name:
-      fc.cardName.length > 18
-        ? fc.cardName.substring(0, 16) + '\u2026'
-        : fc.cardName,
-    month: fc.month,
-    fill: timelineBarColor(fc.month, totalMonths),
-  }))
-
-  return (
-    <div>
-      <p className='mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>
-        Línea de tiempo de liberación
-      </p>
-      <ResponsiveContainer width='100%' height={freedCards.length * 48 + 48}>
-        <BarChart
-          layout='vertical'
-          data={chartData}
-          margin={{ top: 4, right: 52, bottom: 4, left: 8 }}
-        >
-          <XAxis
-            type='number'
-            domain={[0, totalMonths]}
-            tickCount={5}
-            tick={{ fontSize: 10 }}
-            tickFormatter={(v: number) => `M${v}`}
-          />
-          <YAxis
-            dataKey='name'
-            type='category'
-            width={116}
-            tick={{ fontSize: 11 }}
-          />
-          <Tooltip
-            formatter={(value) => {
-              const month = typeof value === 'number' ? value : 0
-              return [`Mes ${month} (${formatMonths(month)})`, 'Libre en']
-            }}
-          />
-          <Bar dataKey='month' radius={[0, 4, 4, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
-
 // ─── SimulatorResults ─────────────────────────────────────────────────────────
 
 function SimulatorResults({
@@ -351,38 +277,29 @@ function SimulatorResults({
   if (!simulation) return null
 
   return (
-    <div className='flex flex-col gap-4'>
-      {/* Key metrics */}
-      <div className='grid grid-cols-2 gap-2'>
-        <div className='rounded-xl bg-muted/50 p-3'>
-          <p className='text-xs text-muted-foreground'>Libre de deuda en</p>
-          <p className='mt-0.5 text-xl font-bold text-green-600 dark:text-green-400'>
-            {formatMonths(simulation.totalMonths)}
-          </p>
-        </div>
-        <div className='rounded-xl bg-muted/50 p-3'>
-          <p className='text-xs text-muted-foreground'>Total intereses</p>
-          <p className='mt-0.5 text-xl font-bold text-red-600 dark:text-red-400'>
-            {formatCLP(simulation.totalInterestPaid)}
-          </p>
-        </div>
-        {simulation.savingsVsMinimum > 0 && (
-          <div className='col-span-2 rounded-xl bg-green-50 p-3 dark:bg-green-950/20'>
-            <p className='text-xs text-muted-foreground'>
-              Ahorro vs solo mínimos
-            </p>
-            <p className='mt-0.5 text-xl font-bold text-green-700 dark:text-green-300'>
-              {formatCLP(simulation.savingsVsMinimum)}
-            </p>
-          </div>
-        )}
+    <div className='grid grid-cols-2 gap-2'>
+      <div className='rounded-xl bg-muted/50 p-3'>
+        <p className='text-xs text-muted-foreground'>Libre de deuda en</p>
+        <p className='mt-0.5 text-xl font-bold text-green-600 dark:text-green-400'>
+          {formatMonths(simulation.totalMonths)}
+        </p>
       </div>
-
-      {/* Freed cards timeline chart */}
-      <FreedCardsChart
-        freedCards={simulation.freedCards}
-        totalMonths={simulation.totalMonths}
-      />
+      <div className='rounded-xl bg-muted/50 p-3'>
+        <p className='text-xs text-muted-foreground'>Total intereses</p>
+        <p className='mt-0.5 text-xl font-bold text-red-600 dark:text-red-400'>
+          {formatCLP(simulation.totalInterestPaid)}
+        </p>
+      </div>
+      {simulation.savingsVsMinimum > 0 && (
+        <div className='col-span-2 rounded-xl bg-green-50 p-3 dark:bg-green-950/20'>
+          <p className='text-xs text-muted-foreground'>
+            Ahorro vs solo mínimos
+          </p>
+          <p className='mt-0.5 text-xl font-bold text-green-700 dark:text-green-300'>
+            {formatCLP(simulation.savingsVsMinimum)}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -747,7 +664,11 @@ export function DebtPageView() {
     savePlanMutation.mutate({ strategy, monthlyPayment: debouncedPayment })
   }
 
-  const isLoading = overviewLoading || cardsLoading
+  // typeof window === 'undefined' on the server → isLoading=true → renders
+  // the same skeleton as the first client render (queries still pending) →
+  // no hydration mismatch. Avoids the setState-in-effect anti-pattern.
+  const isLoading =
+    globalThis.window === undefined || overviewLoading || cardsLoading
 
   if (isLoading) {
     return (
@@ -845,6 +766,11 @@ export function DebtPageView() {
           onStrategySelect={handleStrategySelect}
           onSavePlan={handleSavePlan}
         />
+      )}
+
+      {/* Debt payoff timeline — full area chart with card evolution */}
+      {simulation && (
+        <DebtPayoffTimeline simulation={simulation} cards={debtCards} />
       )}
 
       {/* Strategy comparison */}

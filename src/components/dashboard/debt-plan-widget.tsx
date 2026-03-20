@@ -1,3 +1,5 @@
+'use client'
+
 import Link from 'next/link'
 import { CreditCard, TrendingDown } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button'
@@ -23,7 +25,13 @@ export type DebtPlanWidgetProps =
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatCLP(amount: number): string {
-  return `$${amount.toLocaleString('de-DE')}`
+  const digits = Math.abs(Math.round(amount)).toString()
+  let result = ''
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 === 0) result += '.'
+    result += digits[i]
+  }
+  return '$' + result
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
