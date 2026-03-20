@@ -15,6 +15,15 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
   prettierConfig,
+  {
+    rules: {
+      // exhaustive-deps warns correctly most of the time, but its auto-fix
+      // suggestions can include unsafe array index access (e.g. array[0].prop
+      // in a dep array throws when the array is empty). Always verify manually
+      // before accepting the suggested dep array — never blindly apply the fix.
+      "react-hooks/exhaustive-deps": "warn",
+    },
+  },
 ]);
 
 export default eslintConfig;
