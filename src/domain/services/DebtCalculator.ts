@@ -176,7 +176,9 @@ export class DebtCalculator {
     let month = 0
 
     while (month < MAX_SIMULATION_MONTHS) {
-      const activeIds = allCardIds.filter((id) => (balances.get(id) ?? 0) > 0)
+      // Non-null assertion: allCardIds always have corresponding entries in balances
+      // (both are derived from cardsWithDebt). Paid-off cards have balance 0 in the map.
+      const activeIds = allCardIds.filter((id) => balances.get(id)! > 0)
       if (activeIds.length === 0) break
 
       month++

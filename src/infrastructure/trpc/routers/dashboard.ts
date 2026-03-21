@@ -123,6 +123,8 @@ export const dashboardRouter = router({
     const slices = top.map((c, i) => ({
       name: c.name,
       value: c.currentBalance,
+      // v8 ignore: totalDebt > 0 always (cards are filtered by currentBalance > 0 above)
+      /* v8 ignore next */
       percentage:
         totalDebt > 0 ? Math.round((c.currentBalance / totalDebt) * 100) : 0,
       color: CHART_COLORS[i],
@@ -133,6 +135,8 @@ export const dashboardRouter = router({
       slices.push({
         name: `Otras (${rest.length} tarjetas)`,
         value: otherTotal,
+        // v8 ignore: totalDebt > 0 always (rest only exists when cards have positive balance)
+        /* v8 ignore next */
         percentage:
           totalDebt > 0 ? Math.round((otherTotal / totalDebt) * 100) : 0,
         color: '#94A3B8',

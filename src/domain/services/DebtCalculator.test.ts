@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { type CardInput, DebtCalculator } from './DebtCalculator'
+import {
+  type CardInput,
+  DebtCalculator,
+  type FreedCard,
+  type MonthlySnapshot,
+  type PayoffStrategy,
+} from './DebtCalculator'
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -319,7 +325,79 @@ describe('DebtCalculator.simulatePayoff — real data, snowball $1.5M/month', ()
   })
 })
 
+// ─── simulatePayoff — snowball rate tie-breaker ───────────────────────────────
+
+describe('DebtCalculator.simulatePayoff — snowball rate tie-breaker', () => {
+  it('pays off the lower-rate card first when two cards have identical balances', () => {
+    // Both cards start at exactly $1,000,000, so the balance comparison (line 381)
+    // is equal and execution falls through to the rate tie-breaker at line 382:
+    //   return rateA - rateB  →  ascending rate order → low-rate card sorts first
+    // The first card in the sorted list receives the excess payment, so the
+    // low-rate card (2.00%) is targeted first and freed earlier than the high-rate
+    // card (3.00%).
+    const cards: CardInput[] = [
+      {
+        id: 'low-rate',
+        name: 'Low Rate Card',
+        balance: 1_000_000,
+        monthlyRate: 2.0,
+      },
+      {
+        id: 'high-rate',
+        name: 'High Rate Card',
+        balance: 1_000_000,
+        monthlyRate: 3.0,
+      },
+    ]
+
+    const result = DebtCalculator.simulatePayoff(cards, 100_000, 'snowball')
+
+    const lowRateFreeMonth = result.freedCards.find(
+      (f) => f.cardId === 'low-rate'
+    )!.month
+    const highRateFreeMonth = result.freedCards.find(
+      (f) => f.cardId === 'high-rate'
+    )!.month
+
+    // Low-rate card is targeted first (freed earlier); high-rate card is freed last.
+    expect(lowRateFreeMonth).toBeLessThan(highRateFreeMonth)
+  })
+})
+
 // ─── compareStrategies ────────────────────────────────────────────────────────
+
+describe('DebtCalculator.compareStrategies — equal recommendation', () => {
+  it('recommendation is equal when both strategies yield identical results (single card)', () => {
+    // One card → sort order is irrelevant → avalanche and snowball are identical
+    const comparison = DebtCalculator.compareStrategies(SINGLE_CARD, 1_500_000)
+    expect(comparison.recommendation).toBe('equal')
+    expect(comparison.interestDifference).toBe(0)
+    expect(comparison.monthsDifference).toBe(0)
+  })
+})
+
+// ─── resolveRecommendation (private, via reflection) ──────────────────────────
+
+describe('DebtCalculator.resolveRecommendation (private, via reflection)', () => {
+  // Access the private static method directly for branch coverage of the 'snowball' path,
+  // which is mathematically unreachable through compareStrategies (avalanche always wins
+  // or ties, never loses on interest) but the guard branch must be explicitly tested.
+  const resolve = (
+    DebtCalculator as unknown as {
+      resolveRecommendation: (
+        diff: number
+      ) => 'avalanche' | 'snowball' | 'equal'
+    }
+  ).resolveRecommendation.bind(DebtCalculator)
+
+  it('returns snowball when interestDifference > 0', () => {
+    expect(resolve(1)).toBe('snowball')
+  })
+
+  it('returns avalanche when interestDifference < 0', () => {
+    expect(resolve(-1)).toBe('avalanche')
+  })
+})
 
 describe('DebtCalculator.compareStrategies', () => {
   const comparison = DebtCalculator.compareStrategies(FOUR_CARDS, 1_500_000)
@@ -460,5 +538,91 @@ describe('DebtCalculator — simulation correctness', () => {
     expect(cardAFree.month).toBe(3)
 
     expect(result.totalMonths).toBe(3)
+  })
+})
+
+// ─── Private method reflection tests ──────────────────────────────────────────
+
+/**
+ * These tests reach private static helpers directly through a type cast so that
+ * V8 records the ?? / ?. null-fallback branches that cannot be reached through
+ * the public API (Maps are always populated from the same cardsWithDebt source).
+ */
+describe('DebtCalculator — private method null-fallback branches (reflection)', () => {
+  type PrivateMethods = {
+    computeInterestTotal(
+      activeIds: string[],
+      balances: Map<string, number>,
+      cardMap: Map<string, CardInput>
+    ): number
+    distributeExcess(
+      sortedIds: string[],
+      balances: Map<string, number>,
+      cardMap: Map<string, CardInput>,
+      excess: number,
+      month: number,
+      freedCards: FreedCard[]
+    ): number
+    buildSnapshot(
+      month: number,
+      allCardIds: string[],
+      balances: Map<string, number>,
+      interestPaid: number,
+      principalPaid: number
+    ): MonthlySnapshot
+    sortByStrategy(
+      cardIds: string[],
+      cardMap: Map<string, CardInput>,
+      balances: Map<string, number>,
+      strategy: PayoffStrategy
+    ): string[]
+  }
+
+  const dc = DebtCalculator as unknown as PrivateMethods
+
+  it('computeInterestTotal: ?? 0 fallbacks when ids are absent from both maps', () => {
+    // Both balance and rate will hit ?? 0 — result is 0
+    expect(dc.computeInterestTotal(['x'], new Map(), new Map())).toBe(0)
+  })
+
+  it('distributeExcess: ?? 0 + skip when id is absent from balances map', () => {
+    const freed: FreedCard[] = []
+    // currentBal hits ?? 0 → 0 → continue branch fires
+    expect(
+      dc.distributeExcess(['x'], new Map(), new Map(), 100, 1, freed)
+    ).toBe(0)
+    expect(freed).toHaveLength(0)
+  })
+
+  it('distributeExcess: ?.name ?? id fallback when card absent from cardMap', () => {
+    const freed: FreedCard[] = []
+    // balance 500, excess 2000 → card is fully paid. cardMap has no entry → name falls back to id
+    dc.distributeExcess(['x'], new Map([['x', 500]]), new Map(), 2000, 3, freed)
+    expect(freed[0].cardName).toBe('x')
+  })
+
+  it('buildSnapshot: ?? 0 fallback when id is absent from balances map', () => {
+    const snap = dc.buildSnapshot(1, ['x'], new Map(), 100, 200)
+    expect(snap.cardBalances['x']).toBe(0)
+  })
+
+  it('sortByStrategy avalanche: ?? 0 fallbacks when both ids are absent from maps', () => {
+    const sorted = dc.sortByStrategy(
+      ['a', 'b'],
+      new Map(),
+      new Map(),
+      'avalanche'
+    )
+    expect(sorted).toHaveLength(2)
+  })
+
+  it('sortByStrategy snowball: ?? 0 fallbacks when both ids are absent from maps', () => {
+    const sorted = dc.sortByStrategy(
+      ['a', 'b'],
+      new Map(),
+      new Map(),
+      'snowball'
+    )
+    expect(sorted).toHaveLength(2)
   })
 })

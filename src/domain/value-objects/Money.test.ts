@@ -20,6 +20,14 @@ describe('Money', () => {
       expect(money.value).toBe(0)
       expect(money.isZero()).toBe(true)
     })
+
+    it('throws when a non-integer is passed directly to the constructor', () => {
+      // All public factory methods round before calling the constructor, so the
+      // guard is only reachable by bypassing TypeScript's `private` at runtime.
+      expect(
+        () => new (Money as unknown as new (n: number) => Money)(1.5)
+      ).toThrow('Money must be an integer')
+    })
   })
 
   // ─── Arithmetic ─────────────────────────────────────────────────
