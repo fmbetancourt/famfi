@@ -6,13 +6,17 @@ import { httpBatchLink } from '@trpc/client'
 import { SessionProvider } from 'next-auth/react'
 import { trpc } from '@/infrastructure/trpc/client'
 
+// Priority: NEXTAUTH_URL (production) → VERCEL_URL (preview) → localhost (dev)
 function getBaseUrl(): string {
-  if (typeof window !== 'undefined') return ''
+  if (globalThis.window !== undefined) return ''
+  if (process.env.NEXTAUTH_URL) return process.env.NEXTAUTH_URL
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
   return 'http://localhost:3000'
 }
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
