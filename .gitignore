@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# SonarScanner cache
+.scannerwork/
+
 # production
 /build
 

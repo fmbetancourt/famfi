@@ -1,10 +1,11 @@
+import { BudgetPageView } from '@/components/budget/budget-page-view'
+
 export default function BudgetPage() {
+  const now = new Date()
   return (
-    <div className="p-4 md:p-6">
-      <h1 className="text-2xl font-bold">Presupuesto</h1>
-      <p className="mt-1 text-muted-foreground">
-        Planificación mensual
-      </p>
-    </div>
-  );
+    <BudgetPageView
+      initialMonth={now.getMonth() + 1}
+      initialYear={now.getFullYear()}
+    />
+  )
 }
