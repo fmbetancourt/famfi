@@ -1,6 +1,6 @@
 import { getServerSession } from 'next-auth'
 import { redirect } from 'next/navigation'
-import { Toaster } from 'sonner'
+import { Toaster } from '@/components/ui/sonner'
 import { authOptions } from '@/lib/auth'
 import { Providers } from '@/components/providers'
 import { Header } from '@/components/layout/header'
