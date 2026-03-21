@@ -35,11 +35,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Optional: uncomment when @vitest/coverage-v8 is added as devDependency
-      # - name: Run tests with coverage
-      #   run: pnpm test --coverage
-      #   env:
-      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Run tests with coverage
+        run: pnpm test --coverage
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@2f77a1ec69fb1d595b06f35ab27e97605bdef703 # v5
