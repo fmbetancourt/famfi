@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod/v4'
+import { Prisma } from '@/generated/prisma/client'
 import { protectedProcedure, router } from '../trpc'
 
 /** Percentage at which a budget item transitions to "warning" status. */
@@ -41,6 +42,7 @@ function emitBudgetThresholdEvent(
 
 const createInput = z.object({
   amount: z.int().positive(),
+  // Keep in sync with the client-side formSchema in expense-form.tsx
   description: z.string().min(1).max(200),
   merchant: z.string().max(100).optional(),
   categoryId: z.string(),
@@ -141,7 +143,7 @@ export const transactionRouter = router({
 
         if (budget) {
           // Atomically increment actual and read the resulting values for threshold checks.
-          // .catch(() => null) handles the case where no budget item exists for this category.
+          // P2025 = record not found — no budget item for this category yet, skip gracefully.
           const updatedItem = await tx.budgetItem
             .update({
               where: {
@@ -153,7 +155,15 @@ export const transactionRouter = router({
               data: { actual: { increment: input.amount } },
               select: { actual: true, planned: true },
             })
-            .catch(() => null)
+            .catch((err: unknown) => {
+              if (
+                err instanceof Prisma.PrismaClientKnownRequestError &&
+                err.code === 'P2025'
+              ) {
+                return null
+              }
+              throw err
+            })
 
           if (updatedItem) {
             emitBudgetThresholdEvent(
@@ -323,8 +333,15 @@ export const transactionRouter = router({
               },
               data: { actual: { decrement: existing.amount } },
             })
-            .catch(() => {
-              // No matching budget item — skip
+            .catch((err: unknown) => {
+              // P2025 = record not found — no budget item for this category, skip
+              if (
+                err instanceof Prisma.PrismaClientKnownRequestError &&
+                err.code === 'P2025'
+              ) {
+                return
+              }
+              throw err
             })
         }
       })

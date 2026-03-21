@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server'
 import { z } from 'zod/v4'
 import { protectedProcedure, router } from '../trpc'
 
@@ -49,7 +50,7 @@ export const cardRouter = router({
       })
 
       if (!card || card.owner.familyId !== ctx.session.user.familyId) {
-        throw new Error('Card not found')
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found' })
       }
 
       return ctx.prisma.$transaction([

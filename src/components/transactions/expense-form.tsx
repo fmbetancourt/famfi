@@ -19,7 +19,8 @@ const formSchema = z.object({
   categoryId: z.string().min(1, 'Selecciona una categoría'),
   creditCardId: z.string().nullable(),
   memberId: z.string().min(1),
-  description: z.string().max(200).optional(),
+  // Keep in sync with the server-side createInput in transaction.ts
+  description: z.string().min(1, 'Describe el gasto').max(200),
   date: z.string().min(1),
 })
 
@@ -74,6 +75,7 @@ export function ExpenseForm({
     handleSubmit,
     watch,
     setValue,
+    setError,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -107,16 +109,20 @@ export function ExpenseForm({
 
   const onSubmit = useCallback(
     (values: FormValues) => {
+      if (paymentMethod === 'card' && !values.creditCardId) {
+        setError('creditCardId', { message: 'Selecciona una tarjeta' })
+        return
+      }
       createMutation.mutate({
         amount: values.amount,
-        description: values.description || '',
+        description: values.description,
         categoryId: values.categoryId,
         creditCardId: paymentMethod === 'card' ? values.creditCardId : null,
         memberId: values.memberId,
         date: new Date(values.date),
       })
     },
-    [createMutation, paymentMethod]
+    [createMutation, paymentMethod, setError]
   )
 
   const handlePaymentMethodChange = useCallback(
@@ -210,6 +216,11 @@ export function ExpenseForm({
                 </select>
               )}
             />
+            {errors.creditCardId && (
+              <p className='mt-1 text-xs text-destructive'>
+                {errors.creditCardId.message}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -242,6 +253,11 @@ export function ExpenseForm({
             />
           )}
         />
+        {errors.description && (
+          <p className='mt-1 text-xs text-destructive'>
+            {errors.description.message}
+          </p>
+        )}
       </div>
 
       {/* 6. Date */}

@@ -4,7 +4,7 @@ import {
   type CardInput,
   DebtCalculator,
 } from '@/domain/services/DebtCalculator'
-import { protectedProcedure, router } from '../trpc'
+import { protectedProcedure, router, type TRPCContext } from '../trpc'
 
 // ─── Shared schemas ───────────────────────────────────────────────────────────
 
@@ -24,9 +24,7 @@ const simulateInput = z.object({
  * and maps them to the CardInput shape required by DebtCalculator.
  */
 async function fetchDebtCards(
-  prisma: Parameters<
-    Parameters<typeof protectedProcedure.query>[0]
-  >[0]['ctx']['prisma'],
+  prisma: TRPCContext['prisma'],
   familyId: string,
   excludeCardIds: string[] = []
 ): Promise<CardInput[]> {
