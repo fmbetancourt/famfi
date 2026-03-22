@@ -3,14 +3,23 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 
-// NextAuth v4 uses NEXTAUTH_URL internally to construct callback/CSRF URLs.
-// If it is not set (e.g. Vercel Preview deployments), fall back to VERCEL_URL
-// (injected automatically by Vercel) or localhost for local development.
-// Priority: NEXTAUTH_URL → https://${VERCEL_URL} → http://localhost:3000
-if (!process.env.NEXTAUTH_URL) {
-  process.env.NEXTAUTH_URL = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000'
+// NextAuth v4 uses NEXTAUTH_URL to construct callback and CSRF URLs.
+//
+// Vercel exposes two URL variables:
+//   VERCEL_URL         — deployment-specific (e.g. famfi-abc123.vercel.app).
+//                        Changes on every push; users never access this directly.
+//   VERCEL_BRANCH_URL  — stable branch alias (e.g. famfi-git-develop-team.vercel.app).
+//                        The URL users actually hit on preview deployments.
+//
+// Using VERCEL_URL causes a cookie domain mismatch → redirect loop after login.
+// On preview envs, always use VERCEL_BRANCH_URL so the cookie domain matches.
+// On production, respect the explicit NEXTAUTH_URL env var (custom domain).
+if (process.env.VERCEL_ENV === 'preview') {
+  process.env.NEXTAUTH_URL = process.env.VERCEL_BRANCH_URL
+    ? `https://${process.env.VERCEL_BRANCH_URL}`
+    : `https://${process.env.VERCEL_URL}`
+} else {
+  process.env.NEXTAUTH_URL ??= 'http://localhost:3000'
 }
 
 export const authOptions: NextAuthOptions = {
