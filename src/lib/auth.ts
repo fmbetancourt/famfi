@@ -3,20 +3,6 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 
-// NextAuth v4 uses NEXTAUTH_URL internally to construct callback/CSRF URLs.
-// If it is not set (e.g. Vercel Preview deployments), fall back to VERCEL_URL
-// (injected automatically by Vercel) or localhost for local development.
-// Priority: NEXTAUTH_URL → https://${VERCEL_URL} → http://localhost:3000
-if (!process.env.NEXTAUTH_URL) {
-  process.env.NEXTAUTH_URL = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000'
-}
-import { type NextAuthOptions } from 'next-auth'
-import CredentialsProvider from 'next-auth/providers/credentials'
-import { compare } from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
-
 // NextAuth v4 uses NEXTAUTH_URL to construct callback and CSRF URLs.
 //
 // Vercel exposes two URL variables:
